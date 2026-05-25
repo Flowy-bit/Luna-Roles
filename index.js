@@ -11,15 +11,13 @@ const {
 const mongoose = require('mongoose');
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────────
-// Mets l'ID du rôle qui peut utiliser /giverole et /retirerole
 const ALLOWED_ROLE_ID = process.env.ALLOWED_ROLE_ID;
-// Mets l'ID du salon où les logs seront envoyés
 const LOG_CHANNEL_ID  = process.env.LOG_CHANNEL_ID;
 // ───────────────────────────────────────────────────────────────────────────────
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connecté'))
-  .catch(err => console.error('❌ MongoDB erreur:', err));
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch(err => console.error('❌ MongoDB error:', err));
 
 const TempRole = mongoose.model('TempRole', new mongoose.Schema({
   guildId:   String,
@@ -32,85 +30,81 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
-// ─── COMMANDES SLASH ───────────────────────────────────────────────────────────
+// ─── SLASH COMMANDS ────────────────────────────────────────────────────────────
 const commands = [
   new SlashCommandBuilder()
     .setName('giverole')
-    .setDescription('Donne un rôle temporaire à un utilisateur')
+    .setDescription('Grant a temporary role to a user')
     .addUserOption(o =>
-      o.setName('utilisateur').setDescription('L\'utilisateur cible').setRequired(true))
+      o.setName('user').setDescription('The target user').setRequired(true))
     .addRoleOption(o =>
-      o.setName('role').setDescription('Le rôle à attribuer').setRequired(true))
+      o.setName('role').setDescription('The role to assign').setRequired(true))
     .addStringOption(o =>
-      o.setName('duree').setDescription('Durée du rôle').setRequired(true)
+      o.setName('duration').setDescription('Role duration').setRequired(true)
         .addChoices(
-          { name: '1 jour',    value: '1d' },
-          { name: '1 semaine', value: '1w' },
-          { name: '1 mois',    value: '1m' },
+          { name: '1 day',   value: '1d' },
+          { name: '1 week',  value: '1w' },
+          { name: '1 month', value: '1m' },
         )),
 
   new SlashCommandBuilder()
-    .setName('retirerole')
-    .setDescription('Retire manuellement un rôle temporaire avant expiration')
+    .setName('removerole')
+    .setDescription('Manually remove a temporary role before it expires')
     .addUserOption(o =>
-      o.setName('utilisateur').setDescription('L\'utilisateur cible').setRequired(true))
+      o.setName('user').setDescription('The target user').setRequired(true))
     .addRoleOption(o =>
-      o.setName('role').setDescription('Le rôle à retirer').setRequired(true)),
+      o.setName('role').setDescription('The role to remove').setRequired(true)),
 ].map(c => c.toJSON());
 
 // ─── READY ─────────────────────────────────────────────────────────────────────
 client.once('ready', async () => {
-  console.log(`🤖 Bot connecté : ${client.user.tag}`);
+  console.log(`🤖 Bot logged in: ${client.user.tag}`);
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-  console.log('✅ Commandes slash enregistrées');
+  console.log('✅ Slash commands registered');
 
-  // Vérifie les rôles expirés toutes les minutes
   setInterval(() => checkExpiredRoles(), 60 * 1000);
-  checkExpiredRoles(); // vérif au démarrage
+  checkExpiredRoles();
 });
 
 // ─── INTERACTIONS ──────────────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // Vérification du rôle autorisé
   const hasPermission =
     interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
     (ALLOWED_ROLE_ID && interaction.member.roles.cache.has(ALLOWED_ROLE_ID));
 
   if (!hasPermission) {
     return interaction.reply({
-      content: '❌ Tu n\'as pas la permission d\'utiliser cette commande.',
+      content: '❌ You do not have permission to use this command.',
       ephemeral: true,
     });
   }
 
   if (interaction.commandName === 'giverole') {
     await handleGiveRole(interaction);
-  } else if (interaction.commandName === 'retirerole') {
+  } else if (interaction.commandName === 'removerole') {
     await handleRemoveRole(interaction);
   }
 });
 
 // ─── /giverole ─────────────────────────────────────────────────────────────────
 async function handleGiveRole(interaction) {
-  const target = interaction.options.getMember('utilisateur');
+  const target = interaction.options.getMember('user');
   const role   = interaction.options.getRole('role');
-  const duree  = interaction.options.getString('duree');
+  const duree  = interaction.options.getString('duration');
 
   if (!target) {
-    return interaction.reply({ content: '❌ Utilisateur introuvable sur ce serveur.', ephemeral: true });
+    return interaction.reply({ content: '❌ User not found on this server.', ephemeral: true });
   }
 
-  // Calcul expiration
   const durations = { '1d': 1, '1w': 7, '1m': 30 };
-  const labels    = { '1d': '1 jour', '1w': '1 semaine', '1m': '1 mois' };
+  const labels    = { '1d': '1 day', '1w': '1 week', '1m': '1 month' };
   const expiresAt = new Date(Date.now() + durations[duree] * 24 * 60 * 60 * 1000);
 
   try {
-    // Vérifie si l'entrée existe déjà, sinon crée
     await TempRole.findOneAndUpdate(
       { guildId: interaction.guild.id, userId: target.id, roleId: role.id },
       { expiresAt },
@@ -121,13 +115,13 @@ async function handleGiveRole(interaction) {
 
     const embed = new EmbedBuilder()
       .setColor(0x57F287)
-      .setTitle('✅ Rôle temporaire attribué')
+      .setTitle('✅ Temporary role assigned')
       .addFields(
-        { name: 'Utilisateur', value: `${target}`, inline: true },
-        { name: 'Rôle',        value: `${role}`,   inline: true },
-        { name: 'Durée',       value: labels[duree], inline: true },
-        { name: 'Expire le',   value: expiresAt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }), inline: true },
-        { name: 'Par',         value: `${interaction.user}`, inline: true },
+        { name: 'User',       value: `${target}`,       inline: true },
+        { name: 'Role',       value: `${role}`,         inline: true },
+        { name: 'Duration',   value: labels[duree],     inline: true },
+        { name: 'Expires on', value: expiresAt.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }), inline: true },
+        { name: 'Granted by', value: `${interaction.user}`, inline: true },
       )
       .setTimestamp();
 
@@ -136,17 +130,17 @@ async function handleGiveRole(interaction) {
 
   } catch (err) {
     console.error(err);
-    await interaction.reply({ content: '❌ Une erreur est survenue.', ephemeral: true });
+    await interaction.reply({ content: '❌ An error occurred.', ephemeral: true });
   }
 }
 
-// ─── /retirerole ───────────────────────────────────────────────────────────────
+// ─── /removerole ───────────────────────────────────────────────────────────────
 async function handleRemoveRole(interaction) {
-  const target = interaction.options.getMember('utilisateur');
+  const target = interaction.options.getMember('user');
   const role   = interaction.options.getRole('role');
 
   if (!target) {
-    return interaction.reply({ content: '❌ Utilisateur introuvable sur ce serveur.', ephemeral: true });
+    return interaction.reply({ content: '❌ User not found on this server.', ephemeral: true });
   }
 
   try {
@@ -158,7 +152,7 @@ async function handleRemoveRole(interaction) {
 
     if (!entry) {
       return interaction.reply({
-        content: `⚠️ Aucun rôle temporaire **${role.name}** trouvé pour ${target}.`,
+        content: `⚠️ No temporary role **${role.name}** found for ${target}.`,
         ephemeral: true,
       });
     }
@@ -167,11 +161,11 @@ async function handleRemoveRole(interaction) {
 
     const embed = new EmbedBuilder()
       .setColor(0xED4245)
-      .setTitle('🗑️ Rôle temporaire retiré manuellement')
+      .setTitle('🗑️ Temporary role manually removed')
       .addFields(
-        { name: 'Utilisateur', value: `${target}`, inline: true },
-        { name: 'Rôle',        value: `${role}`,   inline: true },
-        { name: 'Retiré par',  value: `${interaction.user}`, inline: true },
+        { name: 'User',       value: `${target}`,           inline: true },
+        { name: 'Role',       value: `${role}`,             inline: true },
+        { name: 'Removed by', value: `${interaction.user}`, inline: true },
       )
       .setTimestamp();
 
@@ -180,11 +174,11 @@ async function handleRemoveRole(interaction) {
 
   } catch (err) {
     console.error(err);
-    await interaction.reply({ content: '❌ Une erreur est survenue.', ephemeral: true });
+    await interaction.reply({ content: '❌ An error occurred.', ephemeral: true });
   }
 }
 
-// ─── VÉRIFICATION EXPIRATION ───────────────────────────────────────────────────
+// ─── EXPIRATION CHECK ──────────────────────────────────────────────────────────
 async function checkExpiredRoles() {
   const expired = await TempRole.find({ expiresAt: { $lte: new Date() } });
 
@@ -199,33 +193,33 @@ async function checkExpiredRoles() {
         const role = guild.roles.cache.get(entry.roleId);
         const embed = new EmbedBuilder()
           .setColor(0xFEE75C)
-          .setTitle('⏰ Rôle temporaire expiré')
+          .setTitle('⏰ Temporary role expired')
           .addFields(
-            { name: 'Utilisateur', value: `<@${entry.userId}>`, inline: true },
-            { name: 'Rôle',        value: role ? `<@&${entry.roleId}>` : entry.roleId, inline: true },
-            { name: 'Expiré le',   value: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }), inline: true },
+            { name: 'User',       value: `<@${entry.userId}>`,                         inline: true },
+            { name: 'Role',       value: role ? `<@&${entry.roleId}>` : entry.roleId,  inline: true },
+            { name: 'Expired on', value: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }), inline: true },
           )
           .setTimestamp();
 
         await sendLog(guild, embed);
-        console.log(`⏰ Rôle expiré retiré à ${entry.userId}`);
+        console.log(`⏰ Expired role removed from ${entry.userId}`);
       }
     } catch (err) {
-      console.error('Erreur retrait rôle expiré:', err);
+      console.error('Error removing expired role:', err);
     }
 
     await TempRole.deleteOne({ _id: entry._id });
   }
 }
 
-// ─── ENVOI LOG ─────────────────────────────────────────────────────────────────
+// ─── SEND LOG ──────────────────────────────────────────────────────────────────
 async function sendLog(guild, embed) {
   if (!LOG_CHANNEL_ID) return;
   try {
     const channel = await guild.channels.fetch(LOG_CHANNEL_ID);
     if (channel) await channel.send({ embeds: [embed] });
   } catch (err) {
-    console.error('Erreur envoi log:', err);
+    console.error('Error sending log:', err);
   }
 }
 
