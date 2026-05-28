@@ -42,9 +42,13 @@ const commands = [
     .addStringOption(o =>
       o.setName('duration').setDescription('Role duration').setRequired(true)
         .addChoices(
-          { name: '1 day',   value: '1d' },
-          { name: '1 week',  value: '1w' },
-          { name: '1 month', value: '1m' },
+          { name: '1 day',    value: '1d'  },
+          { name: '2 days',   value: '2d'  },
+          { name: '1 week',   value: '1w'  },
+          { name: '1 month',  value: '1m'  },
+          { name: '2 months', value: '2mo' },
+          { name: '3 months', value: '3mo' },
+          { name: '1 year',   value: '1y'  },
         )),
 
   new SlashCommandBuilder()
@@ -100,8 +104,8 @@ async function handleGiveRole(interaction) {
     return interaction.reply({ content: '❌ User not found on this server.', ephemeral: true });
   }
 
-  const durations = { '1d': 1, '1w': 7, '1m': 30 };
-  const labels    = { '1d': '1 day', '1w': '1 week', '1m': '1 month' };
+  const durations = { '1d': 1, '2d': 2, '1w': 7, '1m': 30, '2mo': 60, '3mo': 90, '1y': 365 };
+  const labels    = { '1d': '1 day', '2d': '2 days', '1w': '1 week', '1m': '1 month', '2mo': '2 months', '3mo': '3 months', '1y': '1 year' };
   const expiresAt = new Date(Date.now() + durations[duree] * 24 * 60 * 60 * 1000);
 
   try {
