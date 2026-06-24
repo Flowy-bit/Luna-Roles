@@ -59,6 +59,13 @@ const commands = [
       o.setName('user').setDescription('The target user').setRequired(true))
     .addRoleOption(o =>
       o.setName('role').setDescription('The role to remove').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('checkrole')
+    .setDescription('Check remaining time on temporary roles for a user')
+    .addUserOption(o =>
+      o.setName('user').setDescription('The user to check (defaults to yourself)').setRequired(false)),
+
 ].map(c => c.toJSON());
 
 // ─── READY ─────────────────────────────────────────────────────────────────────
@@ -76,6 +83,11 @@ client.once('ready', async () => {
 // ─── INTERACTIONS ──────────────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === 'checkrole') {
+    // /checkrole is usable by everyone — no permission check needed
+    return handleCheckRole(interaction);
+  }
 
   const hasPermission =
     interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
@@ -181,6 +193,97 @@ async function handleRemoveRole(interaction) {
     console.error(err);
     await interaction.reply({ content: '❌ An error occurred.', ephemeral: true });
   }
+}
+
+// ─── /checkrole ────────────────────────────────────────────────────────────────
+async function handleCheckRole(interaction) {
+  // If a user option is provided, only admins / allowed role can check others
+  const targetOption = interaction.options.getMember('user');
+  const isSelf = !targetOption || targetOption.id === interaction.member.id;
+
+  if (!isSelf) {
+    const hasPermission =
+      interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+      (ALLOWED_ROLE_ID && interaction.member.roles.cache.has(ALLOWED_ROLE_ID));
+
+    if (!hasPermission) {
+      return interaction.reply({
+        content: '❌ You do not have permission to check other users\' roles.',
+        ephemeral: true,
+      });
+    }
+  }
+
+  const target = targetOption || interaction.member;
+
+  try {
+    const entries = await TempRole.find({
+      guildId: interaction.guild.id,
+      userId:  target.id,
+    });
+
+    if (entries.length === 0) {
+      return interaction.reply({
+        content: `ℹ️ ${isSelf ? 'You have' : `${target} has`} no active temporary roles.`,
+        ephemeral: true,
+      });
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle(`🕐 Active Temporary Roles — ${target.displayName}`)
+      .setTimestamp();
+
+    for (const entry of entries) {
+      const role = interaction.guild.roles.cache.get(entry.roleId);
+      const roleName = role ? `<@&${entry.roleId}>` : `Unknown role (${entry.roleId})`;
+
+      const now       = Date.now();
+      const expiresAt = entry.expiresAt.getTime();
+      const diffMs    = expiresAt - now;
+
+      let timeLeft;
+      if (diffMs <= 0) {
+        timeLeft = '⚠️ Expires very soon (pending cleanup)';
+      } else {
+        timeLeft = formatDuration(diffMs);
+      }
+
+      const expiresOn = entry.expiresAt.toLocaleDateString('en-GB', {
+        day:   '2-digit',
+        month: 'long',
+        year:  'numeric',
+      });
+
+      embed.addFields({
+        name:   roleName,
+        value:  `⏳ **Time left:** ${timeLeft}\n📅 **Expires on:** ${expiresOn}`,
+        inline: false,
+      });
+    }
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+  } catch (err) {
+    console.error(err);
+    await interaction.reply({ content: '❌ An error occurred.', ephemeral: true });
+  }
+}
+
+// ─── FORMAT DURATION ───────────────────────────────────────────────────────────
+function formatDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const days    = Math.floor(totalSeconds / 86400);
+  const hours   = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  const parts = [];
+  if (days    > 0) parts.push(`${days} day${days > 1 ? 's' : ''}`);
+  if (hours   > 0) parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
+  if (minutes > 0) parts.push(`${minutes} minute${minutes > 1 ? 's' : ''}`);
+  if (parts.length === 0) parts.push('less than a minute');
+
+  return parts.join(', ');
 }
 
 // ─── EXPIRATION CHECK ──────────────────────────────────────────────────────────
